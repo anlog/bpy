@@ -1,0 +1,19 @@
+language: python
+python:
+  - '3.8'
+
+git:
+  quiet: true
+
+# blocklist
+branches:
+  except:
+    - master
+  only:
+    - travis
+
+install:
+  - test $dlink && curl -LO $dlink || echo "ignored"
+
+script:
+  - python ./bpy.py

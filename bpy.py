@@ -316,22 +316,20 @@ def download_list(file):
                 info('donwload file {} done'.format(i))
 
 
-def upload_list(paths):
+def upload_list(paths, callback=None):
     info('upload list in {}'.format(paths))
-    with concurrent.futures.ProcessPoolExecutor(max_workers=5) as executor:
-        fs = []
-        for p in paths:
-            if not os.path.exists(p):
-                warn("no such file {} upload ignored".format(p))
-                exit(-1)
-            if os.path.isdir(p):
-                for root, dirs, files in os.walk(p, followlinks=True):
-                    for f in files:
-                        fs.append(os.path.join(root, os.path.normpath(f)))
-            else:
-                fs.append(p)
-        for r in executor.map(upload_file, [i for i in fs]):
-            info('upload list in {} done'.format(r))
+    fs = []
+    for p in paths:
+        if not os.path.exists(p):
+            warn("no such file {} upload ignored".format(p))
+            exit(-1)
+        if os.path.isdir(p):
+            for root, dirs, files in os.walk(p, followlinks=True):
+                for f in files:
+                    fs.append(os.path.join(root, os.path.normpath(f)))
+        else:
+            fs.append(p)
+    [upload_file(i) for i in fs]
 
 
 def check_error(func, res):
@@ -389,8 +387,7 @@ def upload_file(file):
     begin_hash = ''
     slice_hash = []
 
-    with open(file, "rb") as f, \
-            concurrent.futures.ThreadPoolExecutor(max_workers=5, thread_name_prefix='upload_file') as executor:
+    with open(file, "rb") as f:
         am = hashlib.md5()
         while True:
             m = hashlib.md5()
@@ -447,6 +444,7 @@ def upload_file(file):
                      '/rest/2.0/xpan/file?{}'.format(urllib.parse.urlencode(query)),
                      urllib.parse.urlencode(payload),
                      headers=headers)
+        info('precreate for {}'.format(file))
         res = conn.getresponse()
         j = check_error(sys._getframe().f_code.co_name, res)
         u_id = j.get('uploadid')
@@ -456,9 +454,8 @@ def upload_file(file):
                  .format(file, os.path.join(UPLOAD_PREFIX, os.path.normpath(strip_slash(file)))))
             exit(0)
         else:
-            for ret in executor.map(upload_block, [{'hash': i, 'file': file, 'id': u_id, 'index': s} for s, i in
-                                                   enumerate(slice_hash)]):
-                info('upload block {} done'.format(ret))
+            [upload_block({'hash': i, 'file': file, 'id': u_id, 'index': s}) for s, i in
+             enumerate(slice_hash)]
     return done_upload(file, size, u_id, slice_hash)
 
 
@@ -516,6 +513,30 @@ def upload_block(args):
             index, md5, file, j.get('md5'))
 
 
+def done_callback(msg):
+    if os.getenv('token'):
+        tk = os.getenv('token')
+
+        conn = http.client.HTTPSConnection('oapi.dingtalk.com') if not DEBUG \
+            else http.client.HTTPSConnection('localhost', 8888, context=ssl._create_unverified_context())
+        if DEBUG: conn.set_tunnel('oapi.dingtalk.com')
+        headers = {
+            'Content-Type': 'application/json',
+        }
+        payload = {
+            'msgtype': 'text',
+            'text': {
+                'content': 'upload {}'.format(msg),
+            },
+            "at": {"isAll": True}
+        }
+
+        conn.request('POST', '/robot/send?access_token={}'.format(tk),
+                     json.dumps(payload), headers=headers)
+        res = conn.getresponse()
+        print(res.getcode(), res.read().decode())
+
+
 def main():
     parser = argparse.ArgumentParser(description='bpy for baidu yun',
                                      epilog='v0.1 hello@ifnot.cc')
@@ -523,12 +544,16 @@ def main():
     parser.add_argument('cmd', help=ls_help)
     parser.add_argument('args', nargs='*', metavar='dir', type=str)
     parser.add_argument('-v', '--verbose', action='store_true')
+    parser.add_argument('-d', '--debug', action='store_true')
     parser.add_argument('-r', '--recursive', action='store_true', help='ls file in recursive mode')
 
-    p = parser.parse_args()
+    global rcs
+    global verbose
+    global DEBUG
 
     global token
-    if token := os.getenv('TOKEN') and token is None and not os.path.exists('.token'):
+
+    if (token := os.getenv('TOKEN')) and token is None and not os.path.exists('.token'):
         err('no token')
         exit(-1)
     elif not token:
@@ -539,9 +564,30 @@ def main():
         err('no token file')
         exit(-2)
 
-    global rcs, verbose
+    if os.getenv('dlink'):
+        dlink = os.getenv('dlink')
+        ls = dlink.split(' ')
+        files = []
+        for i in ls:
+            f = os.path.basename(i)
+            if os.path.exists(f):
+                files.append(f)
+        if len(files):
+            global UPLOAD_PREFIX
+            verbose = True
+            UPLOAD_PREFIX = os.path.join(UPLOAD_PREFIX, 'travis')
+            upload_list(files, done_callback)
+        return
+
+    if os.getenv('TRAVIS'):
+        info('travis')
+        return
+
+    p = parser.parse_args()
+
     rcs = p.recursive
     verbose = p.verbose
+    DEBUG = p.debug
     if p.cmd == 'ls' or p.cmd == 'l' or p.cmd == 'list':
         list_file(p.args)
     elif p.cmd == 'd' or p.cmd == 'download':

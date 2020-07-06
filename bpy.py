@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+
 import argparse
 import concurrent.futures
 import hashlib
@@ -557,11 +559,12 @@ def main():
 
     global token
     token = os.getenv('TOKEN')
-    if token is None and not os.path.exists('.token'):
+    my_dir = os.path.dirname(os.path.realpath(__file__))
+    if token is None and not os.path.exists(os.path.join(my_dir, '.token')):
         err('no token')
         exit(-1)
     elif not token:
-        with open('.token', 'r') as f:
+        with open(os.path.join(my_dir, '.token'), 'r') as f:
             token = f.readline().strip()
 
     if not token:

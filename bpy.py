@@ -49,10 +49,11 @@ def err(msg):
 
 
 def strip_slash(string):
-    if not string.__contains__('./') and not string.__contains__('//'):
+    if not string.__contains__('./') and not string.__contains__('//') and not string.__contains__('..'):
         return string[1:] if string.startswith('/') else string
     else:
-        slash = strip_slash(string.strip().replace('./', '').replace('//', '/'))
+        slash = strip_slash(string.strip().replace('..', '').replace('./', '')
+                            .replace('//', '/'))
         return slash[1:] if slash.startswith('/') else slash
 
 
@@ -318,18 +319,20 @@ def download_list(file):
 
 def upload_list(paths, callback=None):
     info('upload list in {}'.format(paths))
-    fs = []
-    for p in paths:
-        if not os.path.exists(p):
-            warn("no such file {} upload ignored".format(p))
-            exit(-1)
-        if os.path.isdir(p):
-            for root, dirs, files in os.walk(p, followlinks=True):
-                for f in files:
-                    fs.append(os.path.join(root, os.path.normpath(f)))
-        else:
-            fs.append(p)
-    [upload_file(i) for i in fs]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        fs = []
+        for p in paths:
+            if not os.path.exists(p):
+                warn("no such file {} upload ignored".format(p))
+                exit(-1)
+            if os.path.isdir(p):
+                for root, dirs, files in os.walk(p, followlinks=True):
+                    for f in files:
+                        fs.append(os.path.join(root, os.path.normpath(f)))
+            else:
+                fs.append(p)
+        for r in executor.map(upload_file, [i for i in fs]):
+            info('upload list in {} done'.format(r))
 
 
 def check_error(func, res):
@@ -409,13 +412,14 @@ def upload_file(file):
                     break
             m = hashlib.md5()
             b = f.read(BLOCK_SIZE)
+            am.update(b)
             m.update(b)
             size += len(b)
             slice_hash.append(m.hexdigest())
             if len(b) < BLOCK_SIZE:
                 break
         content_hash = am.hexdigest()
-        info("{} {} {}".format(begin_hash, slice_hash, content_hash))
+        info("begin_hash: {}\nslice_hash: {}\ncontent_hash:{}".format(begin_hash, slice_hash, content_hash))
         if DEBUG:
             conn = http.client.HTTPSConnection('localhost', 8888, context=ssl._create_unverified_context())
             conn.set_tunnel('pan.baidu.com')
@@ -552,8 +556,8 @@ def main():
     global DEBUG
 
     global token
-
-    if (token := os.getenv('TOKEN')) and token is None and not os.path.exists('.token'):
+    token = os.getenv('TOKEN')
+    if token is None and not os.path.exists('.token'):
         err('no token')
         exit(-1)
     elif not token:

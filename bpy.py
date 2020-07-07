@@ -15,6 +15,7 @@ import urllib.request
 # ssl._create_default_https_context = ssl._create_unverified_context
 
 token = None
+tk = None
 
 DEBUG = False
 UPLOAD_PREFIX = '/_bpy_'
@@ -543,6 +544,30 @@ def done_callback(msg):
         print(res.getcode(), res.read().decode())
 
 
+def notify(msg):
+    if not tk:
+        warn('no tk')
+        return
+    conn = http.client.HTTPSConnection('oapi.dingtalk.com') if not DEBUG \
+        else http.client.HTTPSConnection('localhost', 8888, context=ssl._create_unverified_context())
+    if DEBUG: conn.set_tunnel('oapi.dingtalk.com')
+    headers = {
+        'Content-Type': 'application/json',
+    }
+    payload = {
+        'msgtype': 'text',
+        'text': {
+            'content': 'upload {}'.format(msg),
+        },
+        "at": {"isAll": True}
+    }
+
+    conn.request('POST', '/robot/send?access_token={}'.format(tk),
+                 json.dumps(payload), headers=headers)
+    res = conn.getresponse()
+    print(res.getcode(), res.read().decode())
+
+
 def main():
     parser = argparse.ArgumentParser(description='bpy for baidu yun',
                                      epilog='v0.1 hello@ifnot.cc')
@@ -550,6 +575,7 @@ def main():
     parser.add_argument('cmd', help=ls_help)
     parser.add_argument('args', nargs='*', metavar='dir', type=str)
     parser.add_argument('-v', '--verbose', action='store_true')
+    parser.add_argument('-t', '--token', type=str, metavar='secret', help='offer your secret', required=False)
     parser.add_argument('-d', '--debug', action='store_true')
     parser.add_argument('-r', '--recursive', action='store_true', help='ls file in recursive mode')
 
@@ -557,8 +583,17 @@ def main():
     global verbose
     global DEBUG
 
-    global token
-    token = os.getenv('TOKEN')
+    global token, tk
+    sec = os.getenv('TOKEN')
+    if sec:
+        s = sec.split(';')
+        if s and len(s) > 0:
+            token = s[0]
+        elif s and len(s) > 1:
+            tk = s[1]
+        else:
+            pass
+
     my_dir = os.path.dirname(os.path.realpath(__file__))
     if token is None and not os.path.exists(os.path.join(my_dir, '.token')):
         err('no token')
@@ -566,6 +601,7 @@ def main():
     elif not token:
         with open(os.path.join(my_dir, '.token'), 'r') as f:
             token = f.readline().strip()
+            tk = f.readline().strip()
 
     if not token:
         err('no token file')
@@ -583,7 +619,7 @@ def main():
             global UPLOAD_PREFIX
             verbose = True
             UPLOAD_PREFIX = os.path.join(UPLOAD_PREFIX, 'travis')
-            upload_list(files, done_callback)
+            upload_list(files, notify if tk else None)
         return
 
     if os.getenv('TRAVIS'):
@@ -600,7 +636,9 @@ def main():
     elif p.cmd == 'd' or p.cmd == 'download':
         download_list(p.args)
     elif p.cmd == 'u' or p.cmd == 'upload':
-        upload_list(p.args)
+        upload_list(p.args, notify if tk else None)
+    elif p.cmd == 'notify' or p.cmd == 'call':
+        notify(p.args)
     else:
         parser.print_usage()
 

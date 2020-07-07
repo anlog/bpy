@@ -336,6 +336,8 @@ def upload_list(paths, callback=None):
                 fs.append(p)
         for r in executor.map(upload_file, [i for i in fs]):
             info('upload list in {} done'.format(r))
+            if callback:
+                callback('upload list in {} done'.format(r))
 
 
 def check_error(func, res):
@@ -520,30 +522,6 @@ def upload_block(args):
             index, md5, file, j.get('md5'))
 
 
-def done_callback(msg):
-    if os.getenv('token'):
-        tk = os.getenv('token')
-
-        conn = http.client.HTTPSConnection('oapi.dingtalk.com') if not DEBUG \
-            else http.client.HTTPSConnection('localhost', 8888, context=ssl._create_unverified_context())
-        if DEBUG: conn.set_tunnel('oapi.dingtalk.com')
-        headers = {
-            'Content-Type': 'application/json',
-        }
-        payload = {
-            'msgtype': 'text',
-            'text': {
-                'content': 'upload {}'.format(msg),
-            },
-            "at": {"isAll": True}
-        }
-
-        conn.request('POST', '/robot/send?access_token={}'.format(tk),
-                     json.dumps(payload), headers=headers)
-        res = conn.getresponse()
-        print(res.getcode(), res.read().decode())
-
-
 def notify(msg):
     if not tk:
         warn('no tk')
@@ -557,7 +535,7 @@ def notify(msg):
     payload = {
         'msgtype': 'text',
         'text': {
-            'content': 'upload {}'.format(msg),
+            'content': msg,
         },
         "at": {"isAll": True}
     }
@@ -565,7 +543,11 @@ def notify(msg):
     conn.request('POST', '/robot/send?access_token={}'.format(tk),
                  json.dumps(payload), headers=headers)
     res = conn.getresponse()
-    print(res.getcode(), res.read().decode())
+    body = json.loads(res.read())
+    if res.getcode() == http.HTTPStatus.OK and body.get('errcode') == 0:
+        info('send done.')
+    else:
+        err('{} {}'.format(res.getcode(), body))
 
 
 def main():
@@ -576,12 +558,12 @@ def main():
     parser.add_argument('args', nargs='*', metavar='dir', type=str)
     parser.add_argument('-v', '--verbose', action='store_true')
     parser.add_argument('-t', '--token', type=str, metavar='secret', help='offer your secret', required=False)
-    parser.add_argument('-d', '--debug', action='store_true')
+    # parser.add_argument('-d', '--debug', action='store_true')
     parser.add_argument('-r', '--recursive', action='store_true', help='ls file in recursive mode')
 
     global rcs
     global verbose
-    global DEBUG
+    # global DEBUG
 
     global token, tk
     sec = os.getenv('TOKEN')
@@ -630,15 +612,24 @@ def main():
 
     rcs = p.recursive
     verbose = p.verbose
-    DEBUG = p.debug
+    # DEBUG = p.debug
     if p.cmd == 'ls' or p.cmd == 'l' or p.cmd == 'list':
         list_file(p.args)
     elif p.cmd == 'd' or p.cmd == 'download':
-        download_list(p.args)
+        if p.args and len(p.args) > 0:
+            download_list(p.args)
+        else:
+            err('what to download?')
     elif p.cmd == 'u' or p.cmd == 'upload':
-        upload_list(p.args, notify if tk else None)
-    elif p.cmd == 'notify' or p.cmd == 'call':
-        notify(p.args)
+        if p.args and len(p.args) > 0:
+            upload_list(p.args, notify if tk else None)
+        else:
+            err('what to upload?')
+    elif p.cmd == 'notify' or p.cmd == 'call' or p.cmd == 'n':
+        if p.args and len(p.args) > 0:
+            notify('notify: {}'.format(' '.join(p.args)))
+        else:
+            err('what to notify?')
     else:
         parser.print_usage()
 
